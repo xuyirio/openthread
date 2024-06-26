@@ -41,6 +41,7 @@
 #include <openthread/coap.h>
 
 #include "cli/cli_utils.hpp"
+#include "common/timer.hpp"
 
 namespace ot {
 namespace Cli {
@@ -96,6 +97,10 @@ private:
 #endif
 
     void PrintPayload(otMessage *aMessage);
+
+    static void HandleTimer(Timer &aTimer);
+    void        HandleTimer(void);
+    void        SendDemoRequest();
 
 #if OPENTHREAD_CONFIG_COAP_OBSERVE_API_ENABLE
     otError ProcessRequest(Arg aArgs[], otCoapCode aCoapCode, bool aCoapObserve = false);
@@ -153,6 +158,12 @@ private:
 
     otCoapTxParameters mRequestTxParameters;
     otCoapTxParameters mResponseTxParameters;
+
+    bool mIsDemo = false;
+    Arg mDemoArgs[4];
+    uint16_t mDemoIntervalMilli = 0;
+    uint16_t mDemoCount = 0;
+    TimerMilliContext mTimer;
 
 #if OPENTHREAD_CONFIG_COAP_BLOCKWISE_TRANSFER_ENABLE
     otCoapBlockwiseResource mResource;

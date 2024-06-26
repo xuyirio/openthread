@@ -40,6 +40,8 @@
 #include <ctype.h>
 
 #include "cli/cli.hpp"
+#include "cli/cli_utils.hpp"
+#include "common/timer.hpp"
 
 namespace ot {
 namespace Cli {
@@ -48,6 +50,7 @@ Coap::Coap(otInstance *aInstance, OutputImplementer &aOutputImplementer)
     : Utils(aInstance, aOutputImplementer)
     , mUseDefaultRequestTxParameters(true)
     , mUseDefaultResponseTxParameters(true)
+    , mTimer(AsCoreType(aInstance), HandleTimer, this)
 #if OPENTHREAD_CONFIG_COAP_OBSERVE_API_ENABLE
     , mObserveSerial(0)
     , mRequestTokenLength(0)
@@ -136,6 +139,12 @@ void Coap::PrintPayload(otMessage *aMessage)
             length -= bytesToPrint;
             bytesPrinted += bytesToPrint;
         }
+    }
+
+    if (mIsDemo)
+    {
+        mDemoIntervalMilli = 0;
+        mDemoIntervalMilli = buf[bytesPrinted - 1] | (buf[bytesPrinted - 2] << 8);
     }
 
     OutputNewLine();
@@ -496,6 +505,15 @@ template <> otError Coap::Process<Cmd("get")>(Arg aArgs[]) { return ProcessReque
  */
 template <> otError Coap::Process<Cmd("post")>(Arg aArgs[]) { return ProcessRequest(aArgs, OT_COAP_CODE_POST); }
 
+template <> otError Coap::Process<Cmd("demo")>(Arg aArgs[]) {
+    mIsDemo = true;
+    mDemoCount = 0;
+    for (uint16_t i = 0; i < 4; i++) {
+        mDemoArgs[i].Clear();
+        mDemoArgs[i].SetCString(aArgs[i].GetCString());
+    }
+    return ProcessRequest(aArgs, OT_COAP_CODE_POST); }
+
 /**
  * @cli coap put
  * @code
@@ -584,6 +602,7 @@ otError Coap::ProcessRequest(Arg aArgs[], otCoapCode aCoapCode)
     otMessage    *message = nullptr;
     otMessageInfo messageInfo;
     uint16_t      payloadLength = 0;
+    bool          nat64Synth;
 
     // Default parameters
     char         coapUri[kMaxUriLength] = "test";
@@ -602,7 +621,13 @@ otError Coap::ProcessRequest(Arg aArgs[], otCoapCode aCoapCode)
     }
 #endif
 
-    SuccessOrExit(error = aArgs[0].ParseAsIp6Address(coapDestinationIp));
+    SuccessOrExit(
+        error = ParseToIp6Address(GetInstancePtr(), aArgs[0], coapDestinationIp, nat64Synth));
+    if (nat64Synth)
+    {
+        OutputFormat("Sending request to synthesized IPv6 address: ");
+        OutputIp6AddressLine(coapDestinationIp);
+    }
 
     VerifyOrExit(!aArgs[1].IsEmpty(), error = OT_ERROR_INVALID_ARGS);
     VerifyOrExit(aArgs[1].GetLength() < sizeof(coapUri), error = OT_ERROR_INVALID_ARGS);
@@ -792,6 +817,7 @@ otError Coap::Process(Arg aArgs[])
         CmdEntry("cancel"),
 #endif
         CmdEntry("delete"),
+        CmdEntry("demo"),
         CmdEntry("get"),
 #if OPENTHREAD_CONFIG_COAP_OBSERVE_API_ENABLE
         CmdEntry("observe"),
@@ -1089,6 +1115,38 @@ void Coap::HandleResponse(otMessage *aMessage, const otMessageInfo *aMessageInfo
         }
 #endif
         PrintPayload(aMessage);
+        if (mIsDemo) { SendDemoRequest(); }
+    }
+}
+
+void Coap::SendDemoRequest()
+{
+    if (mDemoCount < 10)
+    {
+        mDemoCount++;
+        mTimer.Start(mDemoIntervalMilli);
+        OutputLine("Waiting for %i milliseconds", mDemoIntervalMilli);
+        OutputNewLine();
+    }
+    else {
+        mIsDemo = false;
+        mDemoCount = 0;
+    }
+}
+
+void Coap::HandleTimer(Timer &aTimer)
+{
+    static_cast<Coap *>(static_cast<TimerMilliContext &>(aTimer).GetContext())->HandleTimer();
+}
+
+void Coap::HandleTimer(void)
+{
+    OutputLine("Time up! Resending request #%i ...", mDemoCount);
+    OutputNewLine();
+    otError error = ProcessRequest(mDemoArgs, OT_COAP_CODE_POST);
+    if (error != OT_ERROR_NONE) {
+        OutputLine("Something went wrong. Failed to send request");
+        SendDemoRequest();
     }
 }
 
